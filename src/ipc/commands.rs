@@ -25,7 +25,7 @@ use crate::schema::{
     ReadInspectorResponse, ReadLogRequest, ReadLogResponse, Snapshot,
 };
 use crate::util::resolve_dir;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 
@@ -836,7 +836,7 @@ pub async fn list_log_sessions(state: State<'_, AppState>) -> CmdResult<Vec<LogS
 /// wire. The reader is line-oriented — one bad line is counted under
 /// `skipped_malformed` and skipped, so a partial trailing line in the
 /// active session (still being written) doesn't poison the response.
-/// `limit` is capped at 2000 to bound payload size.
+/// `limit` is capped at 5000 to match the frontend ring.
 #[tauri::command]
 pub async fn read_log_session(
     req: ReadLogRequest,
@@ -867,16 +867,16 @@ pub async fn read_log_session(
             req.levels.as_ref().map(|v| v.iter().cloned().collect());
         let target_filters: Vec<String> = req.targets.unwrap_or_default();
         let search_lc = req.search.as_deref().map(|s| s.to_lowercase());
-        // 0 → use a sane default (1000); otherwise hard-cap at 2000.
+        // 0 → use a sane default (1000); otherwise match the UI ring cap.
         let limit = if req.limit == 0 {
             1000
         } else {
-            req.limit.min(2000)
+            req.limit.min(5000)
         };
 
         let mut skipped_malformed: u32 = 0;
         let mut total_match: usize = 0;
-        let mut entries: Vec<LogEntry> = Vec::with_capacity(limit);
+        let mut entries: VecDeque<LogEntry> = VecDeque::with_capacity(limit);
 
         for line in reader.lines() {
             let line = match line {
@@ -910,14 +910,23 @@ pub async fn read_log_session(
                 }
             }
             total_match += 1;
-            if total_match > req.offset && entries.len() < limit {
-                entries.push(entry);
+            if req.tail {
+                if entries.len() == limit {
+                    entries.pop_front();
+                }
+                entries.push_back(entry);
+            } else if total_match > req.offset && entries.len() < limit {
+                entries.push_back(entry);
             }
         }
 
-        let has_more = total_match > req.offset + entries.len();
+        let has_more = if req.tail {
+            total_match > entries.len()
+        } else {
+            total_match > req.offset + entries.len()
+        };
         Ok(ReadLogResponse {
-            entries,
+            entries: entries.into(),
             has_more,
             skipped_malformed,
         })
@@ -929,7 +938,7 @@ pub async fn read_log_session(
 /// Read filtered, paginated entries from a session's `inspector.jsonl`.
 /// Same line-oriented, fault-tolerant reader as `read_log_session` —
 /// malformed lines bumped under `skipped_malformed`, `limit` capped at
-/// 2000. Filtering is server-side so a session with hundreds of
+/// 5000. Filtering is server-side so a session with hundreds of
 /// thousands of events doesn't have to cross the wire to be narrowed.
 #[tauri::command]
 pub async fn read_inspector(
@@ -964,12 +973,12 @@ pub async fn read_inspector(
         let limit = if req.limit == 0 {
             1000
         } else {
-            req.limit.min(2000)
+            req.limit.min(5000)
         };
 
         let mut skipped_malformed: u32 = 0;
         let mut total_match: usize = 0;
-        let mut entries: Vec<InspectorEntry> = Vec::with_capacity(limit);
+        let mut entries: VecDeque<InspectorEntry> = VecDeque::with_capacity(limit);
 
         for line in reader.lines() {
             let line = match line {
@@ -991,14 +1000,23 @@ pub async fn read_inspector(
                 continue;
             }
             total_match += 1;
-            if total_match > req.offset && entries.len() < limit {
-                entries.push(entry);
+            if req.tail {
+                if entries.len() == limit {
+                    entries.pop_front();
+                }
+                entries.push_back(entry);
+            } else if total_match > req.offset && entries.len() < limit {
+                entries.push_back(entry);
             }
         }
 
-        let has_more = total_match > req.offset + entries.len();
+        let has_more = if req.tail {
+            total_match > entries.len()
+        } else {
+            total_match > req.offset + entries.len()
+        };
         Ok(ReadInspectorResponse {
-            entries,
+            entries: entries.into(),
             has_more,
             skipped_malformed,
         })
@@ -1117,7 +1135,9 @@ pub async fn subscribe_inspector(
         loop {
             match rx.recv().await {
                 Ok(entry) => {
-                    let _ = on_event.send(entry);
+                    if on_event.send(entry).is_err() {
+                        return;
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     // Inject a synthetic mjai-event-shaped warn marker so
@@ -1128,7 +1148,9 @@ pub async fn subscribe_inspector(
                         ts_ms: chrono::Local::now().timestamp_millis(),
                         event: crate::schema::MjaiEvent::None,
                     };
-                    let _ = on_event.send(warn);
+                    if on_event.send(warn).is_err() {
+                        return;
+                    }
                     tracing::warn!(
                         target: "akagi.inspector",
                         "inspector forwarder dropped {n} entries"
@@ -1144,8 +1166,8 @@ pub async fn subscribe_inspector(
 /// Subscribe to live log events. Each event the active session emits is
 /// forwarded over the supplied `tauri::ipc::Channel`. Slow consumers
 /// surface a synthetic `WARN akagi.logger "dropped N events…"` so the
-/// UI can show the gap explicitly. The forwarder task lives until the
-/// broadcast is closed (process shutdown).
+/// UI can show the gap explicitly. The forwarder exits when either the
+/// frontend channel disconnects or the broadcast closes.
 #[tauri::command]
 pub async fn subscribe_log_events(
     state: State<'_, AppState>,
@@ -1156,7 +1178,9 @@ pub async fn subscribe_log_events(
         loop {
             match rx.recv().await {
                 Ok(entry) => {
-                    let _ = on_event.send(entry);
+                    if on_event.send(entry).is_err() {
+                        return;
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     let warn = LogEntry {
@@ -1168,7 +1192,9 @@ pub async fn subscribe_log_events(
                         message: format!("dropped {n} log events (consumer too slow)"),
                         fields: std::collections::HashMap::new(),
                     };
-                    let _ = on_event.send(warn);
+                    if on_event.send(warn).is_err() {
+                        return;
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             }

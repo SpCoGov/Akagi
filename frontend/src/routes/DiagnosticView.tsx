@@ -14,7 +14,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useLogsStore } from '@/stores/logsStore'
-import { useLogStream } from '@/hooks/useLogStream'
 import type { LogEntry } from '@/types'
 
 const LEVEL_ORDER = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE'] as const
@@ -34,14 +33,11 @@ function formatTime(ms: number): string {
 }
 
 type DiagnosticViewProps = {
-  /** Live tail enabled — true only when this tab is visible AND the
-   *  user is on the active session AND tail isn't paused. */
-  liveEnabled: boolean
   autoScroll: boolean
   onUserScrolledAway: () => void
 }
 
-export function DiagnosticView({ liveEnabled, autoScroll, onUserScrolledAway }: DiagnosticViewProps) {
+export function DiagnosticView({ autoScroll, onUserScrolledAway }: DiagnosticViewProps) {
   const { t } = useTranslation()
 
   const filter = useLogsStore((s) => s.filter)
@@ -52,9 +48,6 @@ export function DiagnosticView({ liveEnabled, autoScroll, onUserScrolledAway }: 
 
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
-
-  // Live tail subscription. Hook gates on liveEnabled.
-  useLogStream(liveEnabled)
 
   const observedTargets = useMemo(() => {
     const set = new Set<string>()

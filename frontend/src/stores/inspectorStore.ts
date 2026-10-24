@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { FrameDirection, InspectorEntry, InspectorKind } from '@/types'
+import { mergeSnapshot } from './mergeSnapshot'
 
 /**
  * Inspector tab store.
@@ -33,7 +34,7 @@ type InspectorStore = {
   toggleKind: (kind: InspectorKind) => void
   setSelectedKey: (k: string | null) => void
 
-  setEntries: (e: InspectorEntry[]) => void
+  mergeSnapshot: (e: InspectorEntry[]) => void
   appendBatch: (batch: InspectorEntry[]) => void
   clearEntries: () => void
 }
@@ -58,11 +59,11 @@ export const useInspectorStore = create<InspectorStore>((set) => ({
     }),
   setSelectedKey: (selectedKey) => set({ selectedKey }),
 
-  setEntries: (entries) =>
-    set({
-      entries: entries.length > MAX_ENTRIES ? entries.slice(-MAX_ENTRIES) : entries,
+  mergeSnapshot: (snapshot) =>
+    set((s) => ({
+      entries: mergeSnapshot(snapshot, s.entries, MAX_ENTRIES),
       selectedKey: null,
-    }),
+    })),
   appendBatch: (batch) =>
     set((s) => {
       if (batch.length === 0) return s

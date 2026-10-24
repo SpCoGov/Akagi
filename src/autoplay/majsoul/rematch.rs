@@ -89,7 +89,7 @@ pub async fn run(ctx: Arc<AutoplayContext>, cfg: MajsoulAutoplayConfig) {
             }
             Err(e) => warn!("auto-join: screenshot comparison failed: {e:#}"),
         }
-        random_delay(1.2, 1.8).await;
+        random_delay(2.0, 3.0).await;
         if let Err(e) = click(&page, rect, GAMEOVER_OK, &cfg).await {
             warn!("auto-join: result confirmation click failed: {e:#}");
             return;

@@ -7,35 +7,27 @@ import type { LogEntry } from '@/types'
 /**
  * Live-tail subscription to the active session's tracing stream.
  *
- * Active only when (a) Tauri is present, (b) we're viewing the active
- * session, and (c) the user hasn't paused via the toggle. Arrivals are
+ * The channel stays attached for the route's lifetime so toggles and
+ * session loads cannot create a subscription gap. `enabled` only gates
+ * whether arrivals enter the visible buffer. Arrivals are
  * buffered in a ref and flushed via `requestAnimationFrame` (~60 Hz cap)
  * so React never re-renders at event rate — at `RUST_LOG=trace` under
  * proxy load that can be thousands of events per second, and a naive
  * `setEntries([...prev, ev])` would lock up the page.
  *
- * Lifecycle: one `tauri::ipc::Channel<LogEntry>` per subscribed render.
- * Tauri 2's Channel doesn't currently expose an explicit "stop" — the
- * backend forwarder task lives until the broadcast closes (process
- * shutdown). Re-subscribing on session/pause changes is therefore
- * cheap on the JS side but does spawn a fresh forwarder per call;
- * acceptable since users only flip these toggles by hand.
+ * Lifecycle: one `tauri::ipc::Channel<LogEntry>` per mounted route.
+ * Dropping it on unmount makes the backend forwarder exit on its next send.
  */
 export function useLogStream(enabled: boolean = true): void {
-  const isLive = useLogsStore((s) => s.isLive)
-  const currentSession = useLogsStore((s) => s.currentSession)
-  const activeSession = useLogsStore((s) => s.activeSession)
   const appendBatch = useLogsStore((s) => s.appendBatch)
 
+  const enabledRef = useRef(enabled)
+  enabledRef.current = enabled
   const bufferRef = useRef<LogEntry[]>([])
   const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!HAS_TAURI) return
-    if (!enabled) return
-    if (!isLive) return
-    if (!currentSession || !activeSession) return
-    if (currentSession !== activeSession) return
 
     let cancelled = false
 
@@ -49,7 +41,7 @@ export function useLogStream(enabled: boolean = true): void {
 
     const channel = new Channel<LogEntry>()
     channel.onmessage = (entry) => {
-      if (cancelled) return
+      if (cancelled || !enabledRef.current) return
       bufferRef.current.push(entry)
       if (rafRef.current == null) {
         rafRef.current = requestAnimationFrame(flush)
@@ -70,5 +62,5 @@ export function useLogStream(enabled: boolean = true): void {
       }
       bufferRef.current = []
     }
-  }, [enabled, isLive, currentSession, activeSession, appendBatch])
+  }, [appendBatch])
 }

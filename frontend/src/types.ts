@@ -635,6 +635,7 @@ export type ReadLogRequest = {
   session: string
   offset?: number
   limit?: number
+  tail?: boolean
   levels?: string[]
   /** Target prefixes; any-match (OR). */
   targets?: string[]
@@ -758,6 +759,7 @@ export type ReadInspectorRequest = {
   session: string
   offset?: number
   limit?: number
+  tail?: boolean
   kinds?: InspectorKind[]
   directions?: FrameDirection[]
   actor?: number
