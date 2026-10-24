@@ -11,18 +11,19 @@ import type { InspectorEntry } from '@/types'
  * busy game can exceed React's render budget, so arrivals are coalesced
  * in a `useRef` buffer and flushed once per animation frame.
  *
- * `enabled` is the gate — caller turns this off when viewing a past
- * session, when the inspector tab isn't active, or when the user has
- * paused the live tail.
+ * The channel remains attached while mounted; `enabled` only gates
+ * whether arrivals enter the visible buffer.
  */
 export function useInspectorStream(enabled: boolean): void {
   const appendBatch = useInspectorStore((s) => s.appendBatch)
 
+  const enabledRef = useRef(enabled)
+  enabledRef.current = enabled
   const bufferRef = useRef<InspectorEntry[]>([])
   const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
-    if (!HAS_TAURI || !enabled) return
+    if (!HAS_TAURI) return
 
     let cancelled = false
 
@@ -36,7 +37,7 @@ export function useInspectorStream(enabled: boolean): void {
 
     const channel = new Channel<InspectorEntry>()
     channel.onmessage = (entry) => {
-      if (cancelled) return
+      if (cancelled || !enabledRef.current) return
       bufferRef.current.push(entry)
       if (rafRef.current == null) {
         rafRef.current = requestAnimationFrame(flush)
@@ -55,5 +56,5 @@ export function useInspectorStream(enabled: boolean): void {
       }
       bufferRef.current = []
     }
-  }, [enabled, appendBatch])
+  }, [appendBatch])
 }

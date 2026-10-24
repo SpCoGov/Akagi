@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { LogEntry, LogSessionInfo } from '@/types'
+import { mergeSnapshot } from './mergeSnapshot'
 
 /**
  * Log viewer store.
@@ -50,8 +51,7 @@ type LogsStore = {
   toggleLevel: (level: string) => void
   toggleTarget: (target: string) => void
 
-  /** Replace the buffer wholesale — used after `read_log_session`. */
-  setEntries: (e: LogEntry[]) => void
+  mergeSnapshot: (e: LogEntry[]) => void
   /** Append a batch (rAF-coalesced from `useLogStream`). Drops oldest past cap. */
   appendBatch: (batch: LogEntry[]) => void
   clearEntries: () => void
@@ -97,10 +97,8 @@ export const useLogsStore = create<LogsStore>((set) => ({
       return { filter: { ...s.filter, targets } }
     }),
 
-  setEntries: (entries) =>
-    set({
-      entries: entries.length > MAX_ENTRIES ? entries.slice(-MAX_ENTRIES) : entries,
-    }),
+  mergeSnapshot: (snapshot) =>
+    set((s) => ({ entries: mergeSnapshot(snapshot, s.entries, MAX_ENTRIES) })),
   appendBatch: (batch) =>
     set((s) => {
       if (batch.length === 0) return s

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Circle, FolderOpen, Pause, Play, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,8 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { invoke } from '@/lib/tauri'
+import { useInspectorStream } from '@/hooks/useInspectorStream'
+import { useLogStream } from '@/hooks/useLogStream'
 import { useLogsStore } from '@/stores/logsStore'
 import { useInspectorStore } from '@/stores/inspectorStore'
 import type {
@@ -59,15 +61,17 @@ export function Logs() {
   const setIsLive = useLogsStore((s) => s.setIsLive)
   const autoScroll = useLogsStore((s) => s.autoScroll)
   const setAutoScroll = useLogsStore((s) => s.setAutoScroll)
-  const setLogEntries = useLogsStore((s) => s.setEntries)
+  const mergeLogEntries = useLogsStore((s) => s.mergeSnapshot)
   const clearLogEntries = useLogsStore((s) => s.clearEntries)
-  const setInspectorEntries = useInspectorStore((s) => s.setEntries)
+  const mergeInspectorEntries = useInspectorStore((s) => s.mergeSnapshot)
   const clearInspectorEntries = useInspectorStore((s) => s.clearEntries)
 
   const [tab, setTab] = useState<TabValue>('diagnostic')
   const [busy, setBusy] = useState(false)
+  const loadIdRef = useRef(0)
 
   const loadSession = async (name: string) => {
+    const loadId = ++loadIdRef.current
     setBusy(true)
     try {
       clearLogEntries()
@@ -77,18 +81,21 @@ export function Logs() {
       // want to round-trip a fresh fetch on every flip.
       const [logResp, inspResp] = await Promise.all([
         invoke<ReadLogResponse>('read_log_session', {
-          req: { session: name, offset: 0, limit: 2000 },
+          req: { session: name, offset: 0, limit: 5000, tail: true },
         }),
         invoke<ReadInspectorResponse>('read_inspector', {
-          req: { session: name, offset: 0, limit: 2000 },
+          req: { session: name, offset: 0, limit: 5000, tail: true },
         }),
       ])
-      setLogEntries(logResp.entries)
-      setInspectorEntries(inspResp.entries)
+      if (loadId !== loadIdRef.current) return
+      // Preserve events delivered by the live channels while these disk
+      // reads were in flight; replacing the arrays made rows disappear.
+      mergeLogEntries(logResp.entries)
+      mergeInspectorEntries(inspResp.entries)
     } catch (err) {
       console.warn('session load failed:', err)
     } finally {
-      setBusy(false)
+      if (loadId === loadIdRef.current) setBusy(false)
     }
   }
 
@@ -144,8 +151,11 @@ export function Logs() {
   }
 
   const isViewingActive = currentSession != null && currentSession === activeSession
-  const liveOnDiagnostic = tab === 'diagnostic' && isViewingActive && isLive
-  const liveOnInspector = tab === 'inspector' && isViewingActive && isLive
+  const liveEnabled = isViewingActive && isLive
+
+  // Keep both streams attached so the hidden tab has no recording gap.
+  useLogStream(liveEnabled)
+  useInspectorStream(liveEnabled)
 
   const handleScrolledAway = () => setAutoScroll(false)
 
@@ -247,14 +257,12 @@ export function Logs() {
         </TabsList>
         <TabsContent value="diagnostic" className="flex-1 min-h-0 flex flex-col mt-0">
           <DiagnosticView
-            liveEnabled={liveOnDiagnostic}
             autoScroll={autoScroll}
             onUserScrolledAway={handleScrolledAway}
           />
         </TabsContent>
         <TabsContent value="inspector" className="flex-1 min-h-0 flex flex-col mt-0">
           <InspectorView
-            liveEnabled={liveOnInspector}
             autoScroll={autoScroll}
             onUserScrolledAway={handleScrolledAway}
           />

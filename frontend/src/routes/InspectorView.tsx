@@ -6,7 +6,6 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useInspectorStore } from '@/stores/inspectorStore'
-import { useInspectorStream } from '@/hooks/useInspectorStream'
 import type { FrameDirection, InspectorEntry, InspectorKind } from '@/types'
 
 const KIND_BADGE: Record<InspectorKind, string> = {
@@ -85,14 +84,11 @@ function hexDump(b64: string, t: (k: string, opts?: Record<string, unknown>) => 
 }
 
 type InspectorViewProps = {
-  /** Toggle from the parent — only true when this tab is visible AND
-   *  the user is on the active session AND tail isn't paused. */
-  liveEnabled: boolean
   autoScroll: boolean
   onUserScrolledAway: () => void
 }
 
-export function InspectorView({ liveEnabled, autoScroll, onUserScrolledAway }: InspectorViewProps) {
+export function InspectorView({ autoScroll, onUserScrolledAway }: InspectorViewProps) {
   const { t } = useTranslation()
   const entries = useInspectorStore((s) => s.entries)
   const filter = useInspectorStore((s) => s.filter)
@@ -102,8 +98,6 @@ export function InspectorView({ liveEnabled, autoScroll, onUserScrolledAway }: I
   const setSelectedKey = useInspectorStore((s) => s.setSelectedKey)
 
   const listRef = useRef<HTMLDivElement>(null)
-
-  useInspectorStream(liveEnabled)
 
   const filtered = useMemo(() => {
     const search = filter.search.trim().toLowerCase()

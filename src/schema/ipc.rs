@@ -269,7 +269,7 @@ pub struct LogSessionInfo {
 }
 
 /// Filtered, paginated read against a single session's `all.jsonl`.
-/// `limit` is capped server-side at 2000 to bound payload size.
+/// `limit` is capped server-side at 5000 to match the frontend ring.
 /// `levels`/`targets`/`search` are AND-ed; within each, multiple entries
 /// are OR-ed (level in set; any target prefix matches; substring on
 /// `message` is case-insensitive).
@@ -280,6 +280,8 @@ pub struct ReadLogRequest {
     pub offset: usize,
     #[serde(default)]
     pub limit: usize,
+    #[serde(default)]
+    pub tail: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub levels: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -312,6 +314,8 @@ pub struct ReadInspectorRequest {
     pub offset: usize,
     #[serde(default)]
     pub limit: usize,
+    #[serde(default)]
+    pub tail: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kinds: Option<Vec<String>>,
     /// WS frame directions: `"up"` and/or `"down"`. Non-WS entries are
